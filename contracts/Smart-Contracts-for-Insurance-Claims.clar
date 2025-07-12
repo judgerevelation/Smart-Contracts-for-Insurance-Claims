@@ -3,9 +3,11 @@
 (define-constant ERR-CLAIM-NOT-FOUND (err u102))
 (define-constant ERR-CLAIM-ALREADY-PROCESSED (err u103))
 (define-constant ERR-INSUFFICIENT-BALANCE (err u104))
+(define-constant ERR-EMERGENCY-LIMIT-EXCEEDED (err u105))
 
 (define-data-var contract-owner principal tx-sender)
 (define-data-var total-claims uint u0)
+(define-data-var emergency-claim-limit uint u10000)
 
 (define-map InsuranceClaims
     { claim-id: uint }
@@ -16,6 +18,7 @@
         verified: bool,
         processed-at: uint,
         medical-code: (string-ascii 10),
+        is-emergency: bool,
     }
 )
 
@@ -37,6 +40,7 @@
             verified: false,
             processed-at: u0,
             medical-code: medical-code,
+            is-emergency: false,
         })
         (var-set total-claims claim-id)
         (ok claim-id)
@@ -117,4 +121,40 @@
 
 (define-read-only (get-patient-balance (patient principal))
     (ok (get-balance patient))
+)
+
+(define-public (submit-emergency-claim
+        (amount uint)
+        (medical-code (string-ascii 10))
+    )
+    (let ((claim-id (+ (var-get total-claims) u1)))
+        (try! (validate-amount amount))
+        (asserts! (<= amount (var-get emergency-claim-limit))
+            ERR-EMERGENCY-LIMIT-EXCEEDED
+        )
+        (map-set InsuranceClaims { claim-id: claim-id } {
+            patient: tx-sender,
+            amount: amount,
+            status: "EMERGENCY",
+            verified: true,
+            processed-at: stacks-block-height,
+            medical-code: medical-code,
+            is-emergency: true,
+        })
+        (var-set total-claims claim-id)
+        (add-to-balance tx-sender amount)
+        (ok claim-id)
+    )
+)
+
+(define-public (set-emergency-limit (new-limit uint))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (var-set emergency-claim-limit new-limit)
+        (ok new-limit)
+    )
+)
+
+(define-read-only (get-emergency-limit)
+    (ok (var-get emergency-claim-limit))
 )
