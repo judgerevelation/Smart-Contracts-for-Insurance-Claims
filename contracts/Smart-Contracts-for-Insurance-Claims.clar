@@ -185,7 +185,9 @@
             (dispute-id (+ (var-get total-disputes) u1))
         )
         (asserts! (is-eq (get patient claim) tx-sender) ERR-NOT-AUTHORIZED)
-        (asserts! (is-none (get-dispute-by-claim claim-id)) ERR-DISPUTE-ALREADY-EXISTS)
+        (asserts! (is-none (get-dispute-by-claim claim-id))
+            ERR-DISPUTE-ALREADY-EXISTS
+        )
         (map-set DisputeResolution { dispute-id: dispute-id } {
             claim-id: claim-id,
             patient: tx-sender,
@@ -208,7 +210,10 @@
     (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND)))
         (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
         (asserts! (is-eq (get status dispute) "OPEN") ERR-INVALID-DISPUTE-STATUS)
-        (let ((new-status (if approved "APPROVED" "REJECTED")))
+        (let ((new-status (if approved
+                "APPROVED"
+                "REJECTED"
+            )))
             (map-set DisputeResolution { dispute-id: dispute-id }
                 (merge dispute {
                     status: new-status,
@@ -242,20 +247,28 @@
 )
 
 (define-private (get-dispute-by-claim (target-claim-id uint))
-    (let ((dispute-1 (get-dispute u1))
-          (dispute-2 (get-dispute u2))
-          (dispute-3 (get-dispute u3))
-          (dispute-4 (get-dispute u4))
-          (dispute-5 (get-dispute u5)))
+    (let (
+            (dispute-1 (get-dispute u1))
+            (dispute-2 (get-dispute u2))
+            (dispute-3 (get-dispute u3))
+            (dispute-4 (get-dispute u4))
+            (dispute-5 (get-dispute u5))
+        )
         (if (and (is-some dispute-1) (is-eq (get claim-id (unwrap-panic dispute-1)) target-claim-id))
             (some u1)
             (if (and (is-some dispute-2) (is-eq (get claim-id (unwrap-panic dispute-2)) target-claim-id))
                 (some u2)
-                (if (and (is-some dispute-3) (is-eq (get claim-id (unwrap-panic dispute-3)) target-claim-id))
+                (if (and (is-some dispute-3) (is-eq (get claim-id (unwrap-panic dispute-3))
+                        target-claim-id
+                    ))
                     (some u3)
-                    (if (and (is-some dispute-4) (is-eq (get claim-id (unwrap-panic dispute-4)) target-claim-id))
+                    (if (and (is-some dispute-4) (is-eq (get claim-id (unwrap-panic dispute-4))
+                            target-claim-id
+                        ))
                         (some u4)
-                        (if (and (is-some dispute-5) (is-eq (get claim-id (unwrap-panic dispute-5)) target-claim-id))
+                        (if (and (is-some dispute-5) (is-eq (get claim-id (unwrap-panic dispute-5))
+                                target-claim-id
+                            ))
                             (some u5)
                             none
                         )
