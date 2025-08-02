@@ -4,10 +4,14 @@
 (define-constant ERR-CLAIM-ALREADY-PROCESSED (err u103))
 (define-constant ERR-INSUFFICIENT-BALANCE (err u104))
 (define-constant ERR-EMERGENCY-LIMIT-EXCEEDED (err u105))
+(define-constant ERR-DISPUTE-NOT-FOUND (err u106))
+(define-constant ERR-DISPUTE-ALREADY-EXISTS (err u107))
+(define-constant ERR-INVALID-DISPUTE-STATUS (err u108))
 
 (define-data-var contract-owner principal tx-sender)
 (define-data-var total-claims uint u0)
 (define-data-var emergency-claim-limit uint u10000)
+(define-data-var total-disputes uint u0)
 
 (define-map InsuranceClaims
     { claim-id: uint }
@@ -25,6 +29,19 @@
 (define-map PatientBalances
     { patient: principal }
     { balance: uint }
+)
+
+(define-map DisputeResolution
+    { dispute-id: uint }
+    {
+        claim-id: uint,
+        patient: principal,
+        reason: (string-ascii 100),
+        status: (string-ascii 20),
+        created-at: uint,
+        resolved-at: uint,
+        resolution-notes: (string-ascii 200),
+    }
 )
 
 (define-public (submit-claim
@@ -157,4 +174,102 @@
 
 (define-read-only (get-emergency-limit)
     (ok (var-get emergency-claim-limit))
+)
+
+(define-public (submit-dispute
+        (claim-id uint)
+        (reason (string-ascii 100))
+    )
+    (let (
+            (claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND))
+            (dispute-id (+ (var-get total-disputes) u1))
+        )
+        (asserts! (is-eq (get patient claim) tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (is-none (get-dispute-by-claim claim-id)) ERR-DISPUTE-ALREADY-EXISTS)
+        (map-set DisputeResolution { dispute-id: dispute-id } {
+            claim-id: claim-id,
+            patient: tx-sender,
+            reason: reason,
+            status: "OPEN",
+            created-at: stacks-block-height,
+            resolved-at: u0,
+            resolution-notes: "",
+        })
+        (var-set total-disputes dispute-id)
+        (ok dispute-id)
+    )
+)
+
+(define-public (resolve-dispute
+        (dispute-id uint)
+        (approved bool)
+        (resolution-notes (string-ascii 200))
+    )
+    (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND)))
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status dispute) "OPEN") ERR-INVALID-DISPUTE-STATUS)
+        (let ((new-status (if approved "APPROVED" "REJECTED")))
+            (map-set DisputeResolution { dispute-id: dispute-id }
+                (merge dispute {
+                    status: new-status,
+                    resolved-at: stacks-block-height,
+                    resolution-notes: resolution-notes,
+                })
+            )
+            (if approved
+                (process-dispute-payment (get claim-id dispute))
+                (ok true)
+            )
+        )
+    )
+)
+
+(define-private (process-dispute-payment (claim-id uint))
+    (let ((claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND)))
+        (map-set InsuranceClaims { claim-id: claim-id }
+            (merge claim {
+                status: "PAID",
+                verified: true,
+                processed-at: stacks-block-height,
+            })
+        )
+        (ok (add-to-balance (get patient claim) (get amount claim)))
+    )
+)
+
+(define-private (get-dispute (dispute-id uint))
+    (map-get? DisputeResolution { dispute-id: dispute-id })
+)
+
+(define-private (get-dispute-by-claim (target-claim-id uint))
+    (let ((dispute-1 (get-dispute u1))
+          (dispute-2 (get-dispute u2))
+          (dispute-3 (get-dispute u3))
+          (dispute-4 (get-dispute u4))
+          (dispute-5 (get-dispute u5)))
+        (if (and (is-some dispute-1) (is-eq (get claim-id (unwrap-panic dispute-1)) target-claim-id))
+            (some u1)
+            (if (and (is-some dispute-2) (is-eq (get claim-id (unwrap-panic dispute-2)) target-claim-id))
+                (some u2)
+                (if (and (is-some dispute-3) (is-eq (get claim-id (unwrap-panic dispute-3)) target-claim-id))
+                    (some u3)
+                    (if (and (is-some dispute-4) (is-eq (get claim-id (unwrap-panic dispute-4)) target-claim-id))
+                        (some u4)
+                        (if (and (is-some dispute-5) (is-eq (get claim-id (unwrap-panic dispute-5)) target-claim-id))
+                            (some u5)
+                            none
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+
+(define-read-only (get-dispute-details (dispute-id uint))
+    (ok (get-dispute dispute-id))
+)
+
+(define-read-only (get-claim-disputes (claim-id uint))
+    (ok (get-dispute-by-claim claim-id))
 )
