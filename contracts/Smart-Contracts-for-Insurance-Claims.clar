@@ -7,11 +7,13 @@
 (define-constant ERR-DISPUTE-NOT-FOUND (err u106))
 (define-constant ERR-DISPUTE-ALREADY-EXISTS (err u107))
 (define-constant ERR-INVALID-DISPUTE-STATUS (err u108))
+(define-constant ERR-CLAIM-EXPIRED (err u109))
 
 (define-data-var contract-owner principal tx-sender)
 (define-data-var total-claims uint u0)
 (define-data-var emergency-claim-limit uint u10000)
 (define-data-var total-disputes uint u0)
+(define-data-var claim-expiration-blocks uint u144)
 
 (define-map InsuranceClaims
     { claim-id: uint }
@@ -23,6 +25,7 @@
         processed-at: uint,
         medical-code: (string-ascii 10),
         is-emergency: bool,
+        submitted-at: uint,
     }
 )
 
@@ -58,6 +61,7 @@
             processed-at: u0,
             medical-code: medical-code,
             is-emergency: false,
+            submitted-at: stacks-block-height,
         })
         (var-set total-claims claim-id)
         (ok claim-id)
@@ -68,6 +72,7 @@
     (let ((claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND)))
         (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
         (asserts! (not (get verified claim)) ERR-CLAIM-ALREADY-PROCESSED)
+        (asserts! (not (is-claim-expired claim-id)) ERR-CLAIM-EXPIRED)
         (map-set InsuranceClaims { claim-id: claim-id }
             (merge claim {
                 verified: true,
@@ -157,6 +162,7 @@
             processed-at: stacks-block-height,
             medical-code: medical-code,
             is-emergency: true,
+            submitted-at: stacks-block-height,
         })
         (var-set total-claims claim-id)
         (add-to-balance tx-sender amount)
@@ -174,6 +180,42 @@
 
 (define-read-only (get-emergency-limit)
     (ok (var-get emergency-claim-limit))
+)
+
+(define-public (set-claim-expiration-blocks (new-blocks uint))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (var-set claim-expiration-blocks new-blocks)
+        (ok new-blocks)
+    )
+)
+
+(define-public (expire-claim (claim-id uint))
+    (let ((claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND)))
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-claim-expired claim-id) ERR-NOT-AUTHORIZED)
+        (map-set InsuranceClaims { claim-id: claim-id }
+            (merge claim { status: "EXPIRED" })
+        )
+        (ok true)
+    )
+)
+
+(define-private (is-claim-expired (claim-id uint))
+    (match (get-claim claim-id)
+        claim (let ((expiration-block (+ (get submitted-at claim) (var-get claim-expiration-blocks))))
+            (>= stacks-block-height expiration-block)
+        )
+        false
+    )
+)
+
+(define-read-only (get-claim-expiration-blocks)
+    (ok (var-get claim-expiration-blocks))
+)
+
+(define-read-only (check-claim-expiration (claim-id uint))
+    (ok (is-claim-expired claim-id))
 )
 
 (define-public (submit-dispute
