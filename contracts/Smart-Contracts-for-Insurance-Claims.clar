@@ -8,12 +8,16 @@
 (define-constant ERR-DISPUTE-ALREADY-EXISTS (err u107))
 (define-constant ERR-INVALID-DISPUTE-STATUS (err u108))
 (define-constant ERR-CLAIM-EXPIRED (err u109))
+(define-constant ERR-CLAIM-ALREADY-VERIFIED (err u110))
+(define-constant ERR-AMENDMENT-NOT-FOUND (err u111))
+(define-constant ERR-AMENDMENT-ALREADY-PROCESSED (err u112))
 
 (define-data-var contract-owner principal tx-sender)
 (define-data-var total-claims uint u0)
 (define-data-var emergency-claim-limit uint u10000)
 (define-data-var total-disputes uint u0)
 (define-data-var claim-expiration-blocks uint u144)
+(define-data-var total-amendments uint u0)
 
 (define-map InsuranceClaims
     { claim-id: uint }
@@ -44,6 +48,20 @@
         created-at: uint,
         resolved-at: uint,
         resolution-notes: (string-ascii 200),
+    }
+)
+
+(define-map ClaimAmendments
+    { amendment-id: uint }
+    {
+        claim-id: uint,
+        patient: principal,
+        new-amount: uint,
+        new-medical-code: (string-ascii 10),
+        reason: (string-ascii 150),
+        status: (string-ascii 20),
+        created-at: uint,
+        processed-at: uint,
     }
 )
 
@@ -327,4 +345,88 @@
 
 (define-read-only (get-claim-disputes (claim-id uint))
     (ok (get-dispute-by-claim claim-id))
+)
+
+;; =====================================================
+;; CLAIM AMENDMENT FEATURE
+;; =====================================================
+;; Allows patients to request changes to their claims
+;; before verification. Contract owner can approve/reject.
+
+(define-public (submit-claim-amendment
+        (claim-id uint)
+        (new-amount uint)
+        (new-medical-code (string-ascii 10))
+        (reason (string-ascii 150))
+    )
+    (let (
+            (claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND))
+            (amendment-id (+ (var-get total-amendments) u1))
+        )
+        (asserts! (is-eq (get patient claim) tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (not (get verified claim)) ERR-CLAIM-ALREADY-VERIFIED)
+        (try! (validate-amount new-amount))
+        (map-set ClaimAmendments { amendment-id: amendment-id } {
+            claim-id: claim-id,
+            patient: tx-sender,
+            new-amount: new-amount,
+            new-medical-code: new-medical-code,
+            reason: reason,
+            status: "PENDING",
+            created-at: stacks-block-height,
+            processed-at: u0,
+        })
+        (var-set total-amendments amendment-id)
+        (ok amendment-id)
+    )
+)
+
+(define-public (approve-claim-amendment
+        (amendment-id uint)
+        (approved bool)
+    )
+    (let (
+            (amendment (unwrap! (get-amendment amendment-id) ERR-AMENDMENT-NOT-FOUND))
+            (claim (unwrap! (get-claim (get claim-id amendment)) ERR-CLAIM-NOT-FOUND))
+        )
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status amendment) "PENDING")
+            ERR-AMENDMENT-ALREADY-PROCESSED
+        )
+        (let ((new-status (if approved
+                "APPROVED"
+                "REJECTED"
+            )))
+            (map-set ClaimAmendments { amendment-id: amendment-id }
+                (merge amendment {
+                    status: new-status,
+                    processed-at: stacks-block-height,
+                })
+            )
+            (if approved
+                (begin
+                    (map-set InsuranceClaims { claim-id: (get claim-id amendment) }
+                        (merge claim {
+                            amount: (get new-amount amendment),
+                            medical-code: (get new-medical-code amendment),
+                        })
+                    )
+                    (ok true)
+                )
+                (ok true)
+            )
+        )
+    )
+)
+
+(define-private (get-amendment (amendment-id uint))
+    (map-get? ClaimAmendments { amendment-id: amendment-id })
+)
+
+(define-read-only (get-amendment-details (amendment-id uint))
+    (ok (get-amendment amendment-id))
+)
+
+(define-read-only (get-total-amendments)
+    (ok (var-get total-amendments))
 )
