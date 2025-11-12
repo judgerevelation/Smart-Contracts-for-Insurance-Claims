@@ -19,6 +19,11 @@
 (define-data-var claim-expiration-blocks uint u144)
 (define-data-var total-amendments uint u0)
 
+(define-map Adjusters
+    { who: principal }
+    { enabled: bool }
+)
+
 (define-map InsuranceClaims
     { claim-id: uint }
     {
@@ -65,6 +70,32 @@
     }
 )
 
+(define-public (set-adjuster
+        (who principal)
+        (enabled bool)
+    )
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (map-set Adjusters { who: who } { enabled: enabled })
+        (ok enabled)
+    )
+)
+
+(define-read-only (get-adjuster (who principal))
+    (ok (map-get? Adjusters { who: who }))
+)
+
+(define-private (is-adjuster (who principal))
+    (match (map-get? Adjusters { who: who })
+        data (get enabled data)
+        false
+    )
+)
+
+(define-private (is-operator)
+    (or (is-contract-owner) (is-adjuster tx-sender))
+)
+
 (define-public (submit-claim
         (amount uint)
         (medical-code (string-ascii 10))
@@ -88,7 +119,7 @@
 
 (define-public (verify-claim (claim-id uint))
     (let ((claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND)))
-        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-operator) ERR-NOT-AUTHORIZED)
         (asserts! (not (get verified claim)) ERR-CLAIM-ALREADY-PROCESSED)
         (asserts! (not (is-claim-expired claim-id)) ERR-CLAIM-EXPIRED)
         (map-set InsuranceClaims { claim-id: claim-id }
@@ -103,7 +134,7 @@
 
 (define-public (process-payment (claim-id uint))
     (let ((claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND)))
-        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-operator) ERR-NOT-AUTHORIZED)
         (asserts! (get verified claim) ERR-NOT-AUTHORIZED)
         (map-set InsuranceClaims { claim-id: claim-id }
             (merge claim {
@@ -210,7 +241,7 @@
 
 (define-public (expire-claim (claim-id uint))
     (let ((claim (unwrap! (get-claim claim-id) ERR-CLAIM-NOT-FOUND)))
-        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-operator) ERR-NOT-AUTHORIZED)
         (asserts! (is-claim-expired claim-id) ERR-NOT-AUTHORIZED)
         (map-set InsuranceClaims { claim-id: claim-id }
             (merge claim { status: "EXPIRED" })
@@ -268,7 +299,7 @@
         (resolution-notes (string-ascii 200))
     )
     (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND)))
-        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-operator) ERR-NOT-AUTHORIZED)
         (asserts! (is-eq (get status dispute) "OPEN") ERR-INVALID-DISPUTE-STATUS)
         (let ((new-status (if approved
                 "APPROVED"
@@ -389,7 +420,7 @@
             (amendment (unwrap! (get-amendment amendment-id) ERR-AMENDMENT-NOT-FOUND))
             (claim (unwrap! (get-claim (get claim-id amendment)) ERR-CLAIM-NOT-FOUND))
         )
-        (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (is-operator) ERR-NOT-AUTHORIZED)
         (asserts! (is-eq (get status amendment) "PENDING")
             ERR-AMENDMENT-ALREADY-PROCESSED
         )
